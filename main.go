@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/smtp"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -47,28 +49,37 @@ type ArrayOfResponseStructure []struct {
 var myClient = &http.Client{Timeout: 10 * time.Second}
 
 func main() {
-	file_all, err := os.Open("przetargi.txt")               // create and open 'hello.txt' in read-and-write mode
-	file_filtered, err := os.Create("filtered_auction.txt") // create and open 'hello.txt' in read-and-write mode
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer file_all.Close()      // close the file_all before exiting the program
-	defer file_filtered.Close() // close the file_all before exiting the program
-	filtered_word := "gawła"
-	//counter := 1
-	//for {
-	//	jsonResponse := &ArrayOfResponseStructure{}
-	//	url := "https://ezamowienia.gov.pl/mo-board/api/v1/Board/Search?publicationDateFrom=2022-04-30T13:07:46.343Z&SortingColumnName=PublicationDate&SortingDirection=DESC&PageNumber=" + strconv.Itoa(counter) + "&PageSize=10"
-	//	err := getJson(url, jsonResponse)
-	//	if err != nil {
-	//		break
-	//	}
-	//	if len(*jsonResponse) == 0 {
-	//		break
-	//	}
-	//	saveToFile(jsonResponse, file_all)
-	//	counter++
+	sendEmailByGoogle()
+	//file_all, err := os.Open("przetargi.txt")
+	//file_filtered, err := os.Create("filtered_auction.txt")
+	//if err != nil {
+	//	log.Fatal(err)
 	//}
+	//defer file_all.Close()
+	//defer file_filtered.Close()
+	//filtered_word := "gawła"
+	//getAuctionFromGovermentSite(file_all)
+	//writeFilteredData(file_all, filtered_word, file_filtered)
+}
+
+func getAuctionFromGovermentSite(file_all *os.File) {
+	counter := 1
+	for {
+		jsonResponse := &ArrayOfResponseStructure{}
+		url := "https://ezamowienia.gov.pl/mo-board/api/v1/Board/Search?publicationDateFrom=2022-04-30T13:07:46.343Z&SortingColumnName=PublicationDate&SortingDirection=DESC&PageNumber=" + strconv.Itoa(counter) + "&PageSize=10"
+		err := getJson(url, jsonResponse)
+		if err != nil {
+			break
+		}
+		if len(*jsonResponse) == 0 {
+			break
+		}
+		saveToFile(jsonResponse, file_all)
+		counter++
+	}
+}
+
+func writeFilteredData(file_all *os.File, filtered_word string, file_filtered *os.File) {
 	scanner := bufio.NewScanner(file_all)
 	line := 1
 	for scanner.Scan() {
@@ -108,4 +119,27 @@ func getJson(url string, target interface{}) error {
 	defer r.Body.Close()
 
 	return json.NewDecoder(r.Body).Decode(target)
+}
+
+func sendEmailByGoogle() {
+	from := "91399c960760af"
+	password := "fb7986dd7608c4"
+
+	toEmailAddress := "m.kapela91@gmail.com"
+	to := []string{toEmailAddress}
+
+	host := "smtp.mailtrap.io"
+	port := "2525"
+	address := host + ":" + port
+
+	subject := "Subject: This is the subject of the mail\n"
+	body := "This is the body of the mail"
+	message := []byte(subject + body)
+
+	auth := smtp.PlainAuth("", from, password, host)
+
+	err := smtp.SendMail(address, auth, from, to, message)
+	if err != nil {
+		panic(err)
+	}
 }
