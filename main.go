@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/smtp"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -54,10 +55,12 @@ var valid_contract_value = "ContractNotice"
 
 var myClient = &http.Client{Timeout: 10 * time.Second}
 var auction_summary = ArrayOfResponseStructure{}
+var ssp_auctions = ArrayOfResponseStructure{}
 
 // tylko ogłoszenia o zamówieniu, reszta out
 // order by localisation
 // wysłac z linkiem
+// przykład filtra po słowach: SSP, CCTV, sygnalizacji pożaru
 
 func main() {
 	//sendEmail()
@@ -84,11 +87,11 @@ func main() {
 func getAuctionFromGovermentSite(file_all *os.File) {
 	counter := 1
 	now := time.Now()
-	week_ago := now.Add(time.Duration(-10) * time.Hour)
+	week_ago := now.Add(time.Duration(-2) * time.Minute)
 	formatted := fmt.Sprintf("%d-%02d-%02dT%02d:%02d:%02d",
 		week_ago.Year(), week_ago.Month(), week_ago.Day(),
 		week_ago.Hour(), week_ago.Minute(), week_ago.Second())
-	for {
+	for i := 0; i < 2; i++ {
 		jsonProvince := &Province{}
 		provinceUrl := "https://ezamowienia.gov.pl/mo-board/api/v1/glossary?glossaryType=province"
 		err := getJson(provinceUrl, jsonProvince)
@@ -110,9 +113,56 @@ func getAuctionFromGovermentSite(file_all *os.File) {
 		}
 		addProvinceName(jsonResponseAuction, jsonProvince)
 		counter++
-		fmt.Println(len(auction_summary))
+		//fmt.Println(len(auction_summary))
 	}
+	sort.Slice(auction_summary, func(i, j int) bool {
+		return auction_summary[i].OrganizationProvince < auction_summary[j].OrganizationProvince
+	})
 	//saveToFile(jsonResponse, file_all)
+
+	for _, auction := range auction_summary {
+		//wynik := strings.Contains(strings.ToLower(auction.OrderObject), "komputer")
+		if strings.Contains(strings.ToLower(auction.OrderObject), "drogo") == true {
+			appendToSspSummary(auction)
+		}
+		//fmt.Println(wynik)
+	}
+	strings.Contains("something", "some")
+}
+
+func appendToSspSummary(auction struct {
+	ClientType                  string      `json:"clientType"`
+	OrderType                   interface{} `json:"orderType"`
+	TenderType                  string      `json:"tenderType"`
+	NoticeType                  string      `json:"noticeType"`
+	NoticeTypeDisplayName       interface{} `json:"noticeTypeDisplayName"`
+	NoticeNumber                string      `json:"noticeNumber"`
+	BzpNumber                   string      `json:"bzpNumber"`
+	IsTenderAmountBelowEU       bool        `json:"isTenderAmountBelowEU"`
+	PublicationDate             time.Time   `json:"publicationDate"`
+	OrderObject                 string      `json:"orderObject"`
+	CpvCode                     string      `json:"cpvCode"`
+	SubmittingOffersDate        interface{} `json:"submittingOffersDate"`
+	ProcedureResult             interface{} `json:"procedureResult"`
+	OrganizationName            string      `json:"organizationName"`
+	OrganizationCity            string      `json:"organizationCity"`
+	OrganizationProvince        string      `json:"organizationProvince"`
+	OrganizationCountry         string      `json:"organizationCountry"`
+	OrganizationNationalID      string      `json:"organizationNationalId"`
+	UserID                      string      `json:"userId"`
+	OrganizationID              string      `json:"organizationId"`
+	MoIdentifier                string      `json:"moIdentifier"`
+	TenderID                    string      `json:"tenderId"`
+	IsManuallyLinkedWithTender  bool        `json:"isManuallyLinkedWithTender"`
+	HTMLBody                    interface{} `json:"htmlBody"`
+	Contractors                 interface{} `json:"contractors"`
+	BzpTenderPlanNumber         interface{} `json:"bzpTenderPlanNumber"`
+	BaseNoticeMOIdentifier      string      `json:"baseNoticeMOIdentifier"`
+	TechnicalNoticeMOIdentifier interface{} `json:"technicalNoticeMOIdentifier"`
+	Outdated                    bool        `json:"outdated"`
+	ObjectID                    string      `json:"objectId"`
+}) {
+	ssp_auctions = append(ssp_auctions, auction)
 }
 
 func addProvinceName(jsonResponseAuction *ArrayOfResponseStructure, jsonProvince *Province) {
