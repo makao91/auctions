@@ -64,7 +64,7 @@ var ssp_auctions = ArrayOfResponseStructure{}
 
 func main() {
 	//sendEmail()
-	file_all, err := os.Open("przetargi.txt")
+	file_all, err := os.Create("przetargi.txt")
 	file_filtered, err := os.Create("filtered_auction.txt")
 	if err != nil {
 		log.Fatal(err)
@@ -85,13 +85,14 @@ func main() {
 }
 
 func getAuctionFromGovermentSite(file_all *os.File) {
+	break_download_new_auctions := false
 	counter := 1
 	now := time.Now()
-	week_ago := now.Add(time.Duration(-2) * time.Minute)
+	week_ago := now.Add(time.Duration(-720) * time.Hour)
 	formatted := fmt.Sprintf("%d-%02d-%02dT%02d:%02d:%02d",
 		week_ago.Year(), week_ago.Month(), week_ago.Day(),
 		week_ago.Hour(), week_ago.Minute(), week_ago.Second())
-	for i := 0; i < 2; i++ {
+	for {
 		jsonProvince := &Province{}
 		provinceUrl := "https://ezamowienia.gov.pl/mo-board/api/v1/glossary?glossaryType=province"
 		err := getJson(provinceUrl, jsonProvince)
@@ -100,12 +101,23 @@ func getAuctionFromGovermentSite(file_all *os.File) {
 		}
 
 		jsonResponseAuction := &ArrayOfResponseStructure{}
-		auctionUrl := "https://ezamowienia.gov.pl/mo-board/api/v1/Board/Search?publicationDateFrom=" + formatted + "Z&SortingColumnName=PublicationDate&SortingDirection=DESC&PageNumber=" + strconv.Itoa(counter) + "&PageSize=10"
+		//auctionUrl := "https://ezamowienia.gov.pl/mo-board/api/v1/Board/Search?keyword=cctv&?publicationDateFrom=" + formatted + "Z&SortingColumnName=PublicationDate&SortingDirection=DESC&PageNumber=" + strconv.Itoa(counter) + "&PageSize=10"
+		//auctionUrl := "https://ezamowienia.gov.pl/mo-board/api/v1/Board/Search?keyword=sygnalizacji%20po%C5%BCar&publicationDateFrom=" + formatted + "Z&SortingColumnName=PublicationDate&SortingDirection=DESC&PageNumber=" + strconv.Itoa(counter) + "&PageSize=10"
+		auctionUrl := "https://ezamowienia.gov.pl/mo-board/api/v1/Board/Search?keyword=ssp&publicationDateFrom=" + formatted + "Z&SortingColumnName=PublicationDate&SortingDirection=DESC&PageNumber=" + strconv.Itoa(counter) + "&PageSize=10"
 		err = getJson(auctionUrl, jsonResponseAuction)
 		if err != nil {
 			break
 		}
 		if len(*jsonResponseAuction) == 0 {
+			break
+		}
+		for _, auction := range *jsonResponseAuction {
+			if week_ago.After(auction.PublicationDate) {
+				break_download_new_auctions = true
+				break
+			}
+		}
+		if break_download_new_auctions == true {
 			break
 		}
 		for i := 0; i < 10; i++ {
@@ -115,19 +127,20 @@ func getAuctionFromGovermentSite(file_all *os.File) {
 		counter++
 		//fmt.Println(len(auction_summary))
 	}
-	sort.Slice(auction_summary, func(i, j int) bool {
-		return auction_summary[i].OrganizationProvince < auction_summary[j].OrganizationProvince
-	})
-	//saveToFile(jsonResponse, file_all)
 
 	for _, auction := range auction_summary {
 		//wynik := strings.Contains(strings.ToLower(auction.OrderObject), "komputer")
-		if strings.Contains(strings.ToLower(auction.OrderObject), "drogo") == true {
+		//if strings.Contains(strings.ToLower(auction.OrderObject), "pożar") == true && strings.Contains(strings.ToLower(auction.OrderObject), "sygnalizacj") == true {
+		//if strings.Contains(strings.ToLower(auction.OrderObject), "cctv") == true {
+		if strings.Contains(strings.ToLower(auction.OrderObject), "ssp") == true {
 			appendToSspSummary(auction)
 		}
-		//fmt.Println(wynik)
 	}
-	strings.Contains("something", "some")
+	sort.Slice(ssp_auctions, func(i, j int) bool {
+		return ssp_auctions[i].OrganizationProvince < ssp_auctions[j].OrganizationProvince
+	})
+	//strings.Contains("something", "some")
+	saveToFile(&ssp_auctions, file_all)
 }
 
 func appendToSspSummary(auction struct {
@@ -248,7 +261,13 @@ func writeFilteredData(file_all *os.File, filtered_word string, file_filtered *o
 func saveToFile(jsonResponse *ArrayOfResponseStructure, file *os.File) {
 	for _, value := range *jsonResponse {
 
-		b, err := fmt.Fprintln(file, value.OrderObject+"\n")
+		b, err := fmt.Fprintln(file,
+			value.OrderObject+"\n",
+			"Województwo: "+value.OrganizationProvince+"\n",
+			"Miasto: "+value.OrganizationCity+"\n",
+			"Link: "+"https://ezamowienia.gov.pl/mo-client-board/bzp/notice-details/id/"+value.ObjectID+"\n",
+			"Data publikacji: "+value.PublicationDate.String()+"\n",
+		)
 		if err != nil {
 			log.Fatal(err)
 		}
