@@ -1,12 +1,10 @@
 package main
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
-	"net/smtp"
 	"os"
 	"sort"
 	"strconv"
@@ -56,6 +54,19 @@ var valid_contract_value = "ContractNotice"
 var myClient = &http.Client{Timeout: 10 * time.Second}
 var auction_summary = ArrayOfResponseStructure{}
 var ssp_auctions = ArrayOfResponseStructure{}
+var keywords_for_request = []string{
+	"sygnalizacji%20po%C5%BCar",
+	"ssp",
+	"cctv",
+}
+var keywords_for_sorting = map[string][]string{
+	"ssp":  {"ssp"},
+	"cctv": {"cctv"},
+	"sygnalizacji%20po%C5%BCar": {
+		"sygnalizacji",
+		"pożar",
+	},
+}
 
 // tylko ogłoszenia o zamówieniu, reszta out
 // order by localisation
@@ -63,28 +74,24 @@ var ssp_auctions = ArrayOfResponseStructure{}
 // przykład filtra po słowach: SSP, CCTV, sygnalizacji pożaru
 
 func main() {
-	//sendEmail()
-	file_all, err := os.Create("przetargi.txt")
-	file_filtered, err := os.Create("filtered_auction.txt")
-	if err != nil {
-		log.Fatal(err)
+	for _, keyword := range keywords_for_request {
+		file, err := os.Create(keyword + "_przetargi.txt")
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer func(file_all *os.File) {
+			err := file_all.Close()
+			if err != nil {
+				log.Fatal(err)
+			}
+		}(file)
+
+		getAuctionFromGovermentSite(file, keyword)
 	}
-	defer func(file_all *os.File) {
-		err := file_all.Close()
-		if err != nil {
-		}
-	}(file_all)
-	defer func(file_filtered *os.File) {
-		err := file_filtered.Close()
-		if err != nil {
-		}
-	}(file_filtered)
-	filtered_word := "gawła"
-	getAuctionFromGovermentSite(file_all)
-	writeFilteredData(file_all, filtered_word, file_filtered)
+	//sendEmail()
 }
 
-func getAuctionFromGovermentSite(file_all *os.File) {
+func getAuctionFromGovermentSite(file_all *os.File, keyword string) {
 	break_download_new_auctions := false
 	counter := 1
 	now := time.Now()
@@ -92,32 +99,18 @@ func getAuctionFromGovermentSite(file_all *os.File) {
 	formatted := fmt.Sprintf("%d-%02d-%02dT%02d:%02d:%02d",
 		week_ago.Year(), week_ago.Month(), week_ago.Day(),
 		week_ago.Hour(), week_ago.Minute(), week_ago.Second())
+	jsonProvince := &Province{}
+
 	for {
-		jsonProvince := &Province{}
-		provinceUrl := "https://ezamowienia.gov.pl/mo-board/api/v1/glossary?glossaryType=province"
-		err := getJson(provinceUrl, jsonProvince)
+		err := loadProvinces(jsonProvince)
 		if err != nil {
-			break
+			log.Fatal(err)
 		}
 
 		jsonResponseAuction := &ArrayOfResponseStructure{}
-		//auctionUrl := "https://ezamowienia.gov.pl/mo-board/api/v1/Board/Search?keyword=cctv&?publicationDateFrom=" + formatted + "Z&SortingColumnName=PublicationDate&SortingDirection=DESC&PageNumber=" + strconv.Itoa(counter) + "&PageSize=10"
-		//auctionUrl := "https://ezamowienia.gov.pl/mo-board/api/v1/Board/Search?keyword=sygnalizacji%20po%C5%BCar&publicationDateFrom=" + formatted + "Z&SortingColumnName=PublicationDate&SortingDirection=DESC&PageNumber=" + strconv.Itoa(counter) + "&PageSize=10"
-		auctionUrl := "https://ezamowienia.gov.pl/mo-board/api/v1/Board/Search?keyword=ssp&publicationDateFrom=" + formatted + "Z&SortingColumnName=PublicationDate&SortingDirection=DESC&PageNumber=" + strconv.Itoa(counter) + "&PageSize=10"
-		err = getJson(auctionUrl, jsonResponseAuction)
-		if err != nil {
-			break
-		}
+		err = loadAuctions(keyword, formatted, counter, err, jsonResponseAuction)
+
 		if len(*jsonResponseAuction) == 0 {
-			break
-		}
-		for _, auction := range *jsonResponseAuction {
-			if week_ago.After(auction.PublicationDate) {
-				break_download_new_auctions = true
-				break
-			}
-		}
-		if break_download_new_auctions == true {
 			break
 		}
 		for i := 0; i < 10; i++ {
@@ -125,22 +118,57 @@ func getAuctionFromGovermentSite(file_all *os.File) {
 		}
 		addProvinceName(jsonResponseAuction, jsonProvince)
 		counter++
+		break_download_new_auctions = isPublicationDateInTheRangeOfTwoWeeks(jsonResponseAuction, week_ago, break_download_new_auctions)
+		if break_download_new_auctions == true {
+			break
+		}
 		//fmt.Println(len(auction_summary))
 	}
-
+	keyword_counter := len(keywords_for_sorting[keyword])
 	for _, auction := range auction_summary {
-		//wynik := strings.Contains(strings.ToLower(auction.OrderObject), "komputer")
-		//if strings.Contains(strings.ToLower(auction.OrderObject), "pożar") == true && strings.Contains(strings.ToLower(auction.OrderObject), "sygnalizacj") == true {
-		//if strings.Contains(strings.ToLower(auction.OrderObject), "cctv") == true {
-		if strings.Contains(strings.ToLower(auction.OrderObject), "ssp") == true {
-			appendToSspSummary(auction)
+		switch keyword_counter {
+		case 1:
+			if strings.Contains(strings.ToLower(auction.OrderObject), keywords_for_sorting[keyword][0]) == true {
+				appendToSspSummary(auction)
+			}
+		case 2:
+			if strings.Contains(strings.ToLower(auction.OrderObject), keywords_for_sorting[keyword][0]) == true && strings.Contains(strings.ToLower(auction.OrderObject), keywords_for_sorting[keyword][1]) == true {
+				appendToSspSummary(auction)
+			}
+		case 3:
+			if strings.Contains(strings.ToLower(auction.OrderObject), keywords_for_sorting[keyword][0]) == true && strings.Contains(strings.ToLower(auction.OrderObject), keywords_for_sorting[keyword][1]) == true && strings.Contains(strings.ToLower(auction.OrderObject), keywords_for_sorting[keyword][2]) == true {
+				appendToSspSummary(auction)
+			}
 		}
+
 	}
 	sort.Slice(ssp_auctions, func(i, j int) bool {
 		return ssp_auctions[i].OrganizationProvince < ssp_auctions[j].OrganizationProvince
 	})
 	//strings.Contains("something", "some")
 	saveToFile(&ssp_auctions, file_all)
+}
+
+func isPublicationDateInTheRangeOfTwoWeeks(jsonResponseAuction *ArrayOfResponseStructure, week_ago time.Time, break_download_new_auctions bool) bool {
+	for _, auction := range *jsonResponseAuction {
+		if week_ago.After(auction.PublicationDate) {
+			break_download_new_auctions = true
+			break
+		}
+	}
+	return break_download_new_auctions
+}
+
+func loadAuctions(keyword string, formatted string, counter int, err error, jsonResponseAuction *ArrayOfResponseStructure) error {
+	auctionUrl := "https://ezamowienia.gov.pl/mo-board/api/v1/Board/Search?keyword=" + keyword + "&publicationDateFrom=" + formatted + "Z&SortingColumnName=PublicationDate&SortingDirection=DESC&PageNumber=" + strconv.Itoa(counter) + "&PageSize=10"
+	err = getJson(auctionUrl, jsonResponseAuction)
+	return err
+}
+
+func loadProvinces(jsonProvince *Province) error {
+	provinceUrl := "https://ezamowienia.gov.pl/mo-board/api/v1/glossary?glossaryType=province"
+	err := getJson(provinceUrl, jsonProvince)
+	return err
 }
 
 func appendToSspSummary(auction struct {
@@ -237,26 +265,27 @@ func removeInvalidOrderType(jsonResponse *ArrayOfResponseStructure) {
 func RemoveIndex(s ArrayOfResponseStructure, index int) ArrayOfResponseStructure {
 	return append(s[:index], s[index+1:]...)
 }
-func writeFilteredData(file_all *os.File, filtered_word string, file_filtered *os.File) {
-	scanner := bufio.NewScanner(file_all)
-	line := 1
-	for scanner.Scan() {
-		if strings.Contains(strings.ToUpper(scanner.Text()), strings.ToUpper(filtered_word)) {
-			b, err := fmt.Fprintln(file_filtered, scanner.Text()+"\n")
-			if err != nil {
-				log.Fatal(err)
-			}
 
-			fmt.Printf("%d bytes written successfully to file: "+file_filtered.Name()+"!\n", b)
-		}
-
-		line++
-	}
-
-	if err := scanner.Err(); err != nil {
-		// Handle the error
-	}
-}
+//func writeFilteredData(file_all *os.File, filtered_word string, file_filtered *os.File) {
+//	scanner := bufio.NewScanner(file_all)
+//	line := 1
+//	for scanner.Scan() {
+//		if strings.Contains(strings.ToUpper(scanner.Text()), strings.ToUpper(filtered_word)) {
+//			b, err := fmt.Fprintln(file_filtered, scanner.Text()+"\n")
+//			if err != nil {
+//				log.Fatal(err)
+//			}
+//
+//			fmt.Printf("%d bytes written successfully to file: "+file_filtered.Name()+"!\n", b)
+//		}
+//
+//		line++
+//	}
+//
+//	if err := scanner.Err(); err != nil {
+//		log.Fatal(err)
+//	}
+//}
 
 func saveToFile(jsonResponse *ArrayOfResponseStructure, file *os.File) {
 	for _, value := range *jsonResponse {
@@ -283,33 +312,4 @@ func getJson(url string, target interface{}) error {
 	defer r.Body.Close()
 
 	return json.NewDecoder(r.Body).Decode(target)
-}
-
-func sendEmailByGoogle() {
-	from := "john.doe@example.com"
-
-	user := "91399c960760af"
-	password := "fb7986dd7608c4"
-
-	to := []string{
-		"roger.roe@example.com",
-	}
-
-	addr := "smtp.mailtrap.io:2525"
-	host := "smtp.mailtrap.io"
-
-	msg := []byte("From: john.doe@example.com\r\n" +
-		"To: roger.roe@example.com\r\n" +
-		"Subject: Test mail\r\n\r\n" +
-		"Email body\r\n")
-
-	auth := smtp.PlainAuth("", user, password, host)
-
-	err := smtp.SendMail(addr, auth, from, to, msg)
-
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	fmt.Println("Email sent successfully")
 }

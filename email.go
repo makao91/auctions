@@ -22,7 +22,7 @@ func sendEmail() {
 	sender := "john.doe@example.com"
 
 	to := []string{
-		"roger.roe@example.com",
+		"m.kapela91@gmail.com",
 	}
 
 	user := "91399c960760af"
